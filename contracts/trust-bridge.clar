@@ -208,3 +208,109 @@
     )
   )
 )
+
+;; Get donation by ID
+(define-read-only (get-donation-by-id (donation-id uint))
+  (match (map-get? donations { id: donation-id })
+    donation (ok donation)
+    ERR-NOT-FOUND
+  )
+)
+
+;; Get total donation count
+(define-read-only (get-donation-count)
+  (ok (var-get donation-count))
+)
+
+;; FUND UTILIZATION TRACKING
+
+;; Add fund utilization record
+(define-public (add-utilization
+    (beneficiary-id uint)
+    (description (string-utf8 255))
+    (amount uint)
+  )
+  (let ((beneficiary (unwrap! (get-beneficiary beneficiary-id) ERR-BENEFICIARY-NOT-FOUND)))
+    (if (and
+        (is-authorized tx-sender ROLE-ADMIN)
+        (> (len description) u0)
+        (> amount u0)
+        (< beneficiary-id (+ (var-get beneficiary-count) u1))
+      )
+      (let (
+          (milestone (+ (get-last-milestone beneficiary-id) u1))
+          (utilization-id (+ (var-get utilization-count) u1))
+        )
+        (begin
+          (map-set utilization { id: utilization-id } {
+            beneficiary-id: beneficiary-id,
+            milestone: milestone,
+            description: description,
+            amount: amount,
+            status: "pending",
+          })
+          (var-set utilization-count utilization-id)
+          (ok milestone)
+        )
+      )
+      ERR-INVALID-INPUT
+    )
+  )
+)
+
+;; Approve fund utilization
+(define-public (approve-utilization
+    (utilization-id uint)
+    (beneficiary-id uint)
+  )
+  (let (
+      (utilization-entry (unwrap! (map-get? utilization { id: utilization-id })
+        ERR-UTILIZATION-NOT-FOUND
+      ))
+      (beneficiary (unwrap! (get-beneficiary beneficiary-id) ERR-BENEFICIARY-NOT-FOUND))
+    )
+    (if (and
+        (is-authorized tx-sender ROLE-ADMIN)
+        (is-eq (get beneficiary-id utilization-entry) beneficiary-id)
+        (< beneficiary-id (+ (var-get beneficiary-count) u1))
+        (< utilization-id (+ (var-get utilization-count) u1))
+      )
+      (if (<= (get amount utilization-entry) (get received-amount beneficiary))
+        (begin
+          (map-set utilization { id: utilization-id }
+            (merge utilization-entry { status: "approved" })
+          )
+          (ok true)
+        )
+        ERR-INSUFFICIENT-FUNDS
+      )
+      ERR-NOT-AUTHORIZED
+    )
+  )
+)
+
+;; Get utilization by ID
+(define-read-only (get-utilization-by-id (utilization-id uint))
+  (match (map-get? utilization { id: utilization-id })
+    util (ok util)
+    ERR-NOT-FOUND
+  )
+)
+
+;; Get total utilization count
+(define-read-only (get-utilization-count)
+  (ok (var-get utilization-count))
+)
+
+;; CONTRACT INITIALIZATION
+
+;; Initialize contract with admin role
+(define-private (initialize-contract)
+  (begin
+    (map-set roles { user: tx-sender } { role: ROLE-ADMIN })
+    (var-set contract-owner tx-sender)
+  )
+)
+
+;; Execute initialization
+(initialize-contract)
